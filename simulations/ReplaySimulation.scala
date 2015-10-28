@@ -8,7 +8,7 @@ abstract class ReplaySimulation extends AbstractSimulation {
 
   override def scn = scenario("Replay Live Logs")
     .forever {
-      feed(new SignificantlyLessShitTSVParser(s"data/$dataFile").circular)
+      feed(new StreamingTSVParser(s"data/$dataFile").circular)
         .exec(userBehaviour)
     }
 }

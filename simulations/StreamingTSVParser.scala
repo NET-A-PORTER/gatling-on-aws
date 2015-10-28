@@ -13,7 +13,7 @@ class CircularFeeder[T](var baseFeeder:Feeder[T],factory: => Feeder[T]) extends 
     }
 }
 
-class SignificantlyLessShitTSVParser(path: String) extends Feeder[String] {
+class StreamingTSVParser(path: String) extends Feeder[String] {
   private val in = new BufferedReader(new FileReader(new File(path)))
   private val columns = in.readLine().split("\t")
   var rsp = input
@@ -37,5 +37,5 @@ class SignificantlyLessShitTSVParser(path: String) extends Feeder[String] {
     case _ => ???
   }
 
-  def circular: Feeder[String] = new CircularFeeder(this,new SignificantlyLessShitTSVParser(path))
+  def circular: Feeder[String] = new CircularFeeder(this,new StreamingTSVParser(path))
 }
