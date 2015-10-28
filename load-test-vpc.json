@@ -1,0 +1,217 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Stack to make the load test boxes",
+  "Mappings" : {
+    "RegionMap" : {
+      "eu-west-1" : { "64" : "ami-69b9941e" },
+      "us-east-1" : { "64" : "ami-e3106686" },
+      "us-west-1": { "64" : "ami-cd3aff89" },
+      "us-west-2": { "64" : "ami-9ff7e8af"},
+      "ap-northeast-1" : { "64" : "ami-9a2fb89a" },
+      "ap-southeast-1" : { "64" : "ami-52978200" },
+      "ap-southeast-2" : { "64" : "ami-c11856fb" }
+    }
+  },
+  "Parameters": {
+    "RunId": {
+      "Type": "String",
+      "Description": "A unique ID for this run"
+    },
+    "S3Bucket": {
+      "Type": "String",
+      "Description": "The S3 bucket that has the load test simulations"
+    },
+    "Simulation": {
+      "Type": "String",
+      "Description": "The name of simulation to run"
+    },
+    "Instances": {
+      "Type": "Number",
+      "Description": "The number of desired instances to run"
+    },
+    "Users": {
+      "Type": "Number",
+      "Description": "The number of users on each instance"
+    },
+    "EndTime": {
+      "Type": "Number",
+      "Description": "The second at which to end the simulation"
+    },
+    "Url": {
+      "Type": "String",
+      "Description": "The Base URL to hit"
+    }
+  },
+  "Resources": {
+    "LoadTestSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "SSH Access to the Load Test instances",
+        "VpcId": "vpc-55920330",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "194.168.210.162/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "54.77.72.71/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "151.227.83.110/32"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "Load Test Security Group"
+          }
+        ]
+      }
+    },
+    "LoadTestInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [{"Ref": "LoadTestRole"}]
+      }
+    },
+    "LoadTestRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": ["ec2.amazonaws.com"]
+              },
+              "Action": ["sts:AssumeRole"]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:Get*",
+                    "s3:List*"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", ["arn:aws:s3:::", {"Ref": "S3Bucket"} ] ] },
+                    { "Fn::Join": [ "", ["arn:aws:s3:::", {"Ref": "S3Bucket"}, "/*" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:Put*"
+                  ],
+                  "Resource": { "Fn::Join": [ "", ["arn:aws:s3:::", {"Ref": "S3Bucket"}, "/reports/*" ] ] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "InstanceLaunchConfiguration": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": {"Ref": "LoadTestInstanceProfile"},
+        "ImageId" : { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "64"]},
+        "InstanceMonitoring": false,
+        "InstanceType": "c4.large",
+        "AssociatePublicIpAddress": true,
+        "SecurityGroups": [{"Ref": "LoadTestSecurityGroup"}],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": "50",
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/sh\n",
+                "set -ex\n",
+                "cd \"$(mktemp -d scenario.XXXXXX)\"\n",
+                "aws s3 cp --recursive s3://", {"Ref": "S3Bucket"}, "/scenario .\n",
+                "cp authorized_keys ~ec2-user/.ssh/authorized_keys\n",
+                "chown ec2-user: ~ec2-user/.ssh/authorized_keys\n",
+                "chmod +x run.sh\n",
+                "./run.sh -n -u",
+                {"Ref": "Users"},
+                " -e",
+                {"Ref": "EndTime"},
+                " -s",
+                {"Ref": "Simulation"},
+                " -b",
+                {"Ref": "Url"},
+                " -r",
+                {"Ref": "RunId"},
+                " -i",
+                {"Ref": "Instances"},
+                " -c",
+                {"Ref": "S3Bucket"},
+                "\n"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "InstanceGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "AvailabilityZones": [
+          {
+            "Fn::Select": [
+              "0",
+              {"Fn::GetAZs": ""}
+            ]
+          },
+          {
+            "Fn::Select": [
+              "1",
+              {"Fn::GetAZs": ""}
+            ]
+          }
+        ],
+        "VPCZoneIdentifier": [
+          "fix-me"
+        ],
+        "LaunchConfigurationName": {"Ref": "InstanceLaunchConfiguration"},
+        "DesiredCapacity": {"Ref": "Instances"},
+        "MaxSize": {"Ref": "Instances"},
+        "MinSize": {"Ref": "Instances"},
+        "Tags": [
+          {
+            "Key": "Name",
+            "PropagateAtLaunch": true,
+            "Value": "Load test box"
+          }
+        ]
+      }
+    }
+  }
+}
